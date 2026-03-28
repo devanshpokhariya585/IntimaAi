@@ -1,7 +1,7 @@
-import React, { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useAuth } from './Authcontext'
 
-// ── Static seed data ──────────────────────────────────────────────────────────
 const SEED_CONVERSATIONS = [
   { id: 1, title: 'PCOS differential diagnosis', group: 'TODAY' },
   { id: 2, title: 'Endometriosis staging criteria', group: 'TODAY' },
@@ -27,7 +27,13 @@ const AI_REPLIES = [
   (q) => `Reviewing PubMed literature for **"${q}"**...\n\nThis is a demo response. Wire up your backend to get real RAG-powered answers with citations.`,
 ]
 
-// ── Avatar ─────────────────────────────────────────────────────────────────────
+const getGreeting = () => {
+  const h = new Date().getHours()
+  if (h < 12) return 'Good morning'
+  if (h < 17) return 'Good afternoon'
+  return 'Good evening'
+}
+
 const Avatar = ({ name, size = 34 }) => {
   const initials = name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
   return (
@@ -41,54 +47,40 @@ const Avatar = ({ name, size = 34 }) => {
   )
 }
 
-// ── Message bubble ─────────────────────────────────────────────────────────────
 const MessageBubble = ({ msg }) => {
   const isUser = msg.role === 'user'
   return (
-    <div style={{
-      display: 'flex',
-      flexDirection: isUser ? 'row-reverse' : 'row',
-      alignItems: 'flex-end', gap: 10, marginBottom: 18,
-      animation: 'fadeUp 0.22s ease',
-    }}>
+    <div style={{ display: 'flex', flexDirection: isUser ? 'row-reverse' : 'row', alignItems: 'flex-end', gap: 10, marginBottom: 18, animation: 'fadeUp 0.22s ease' }}>
       {!isUser && (
-        <div style={{
-          width: 30, height: 30, borderRadius: '8px',
-          backgroundColor: '#1e1e1e', border: '1px solid rgba(255,255,255,0.1)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: 14, flexShrink: 0,
-        }}>🩺</div>
+        <div style={{ width: 30, height: 30, borderRadius: '8px', backgroundColor: '#1e1e1e', border: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, flexShrink: 0 }}>🩺</div>
       )}
       <div style={{
         maxWidth: '68%',
         backgroundColor: isUser ? '#1e1040' : '#161616',
         border: `1px solid ${isUser ? 'rgba(168,85,247,0.25)' : 'rgba(255,255,255,0.07)'}`,
         borderRadius: isUser ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
-        padding: '11px 15px', color: '#e5e7eb', fontSize: 14, lineHeight: 1.65,
-        whiteSpace: 'pre-wrap',
+        padding: '11px 15px', color: '#e5e7eb', fontSize: 14, lineHeight: 1.65, whiteSpace: 'pre-wrap',
       }}>
         {msg.loading ? (
           <span style={{ display: 'inline-flex', gap: 5, alignItems: 'center', height: 18 }}>
             {[0, 1, 2].map(i => (
-              <span key={i} style={{
-                width: 6, height: 6, borderRadius: '50%', backgroundColor: '#a855f7',
-                display: 'inline-block', animation: `dotBounce 1.1s ease ${i * 0.18}s infinite`,
-              }} />
+              <span key={i} style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: '#a855f7', display: 'inline-block', animation: `dotBounce 1.1s ease ${i * 0.18}s infinite` }} />
             ))}
           </span>
         ) : msg.content}
       </div>
-      {isUser && <Avatar name="Devansh Pokhariya" size={30} />}
+      {isUser && <Avatar name={msg.userName || 'User'} size={30} />}
     </div>
   )
 }
 
-// ── Main ───────────────────────────────────────────────────────────────────────
-const Home = () => {
+export default function Home() {
   const navigate = useNavigate()
+  const { user, logout } = useAuth()
+
   const [conversations, setConversations] = useState(SEED_CONVERSATIONS)
   const [activeId, setActiveId] = useState(1)
-  const [messages, setMessages] = useState({})   // { [id]: Message[] }
+  const [messages, setMessages] = useState({})
   const [input, setInput] = useState('')
   const [collapsed, setCollapsed] = useState(false)
   const bottomRef = useRef(null)
@@ -99,10 +91,13 @@ const Home = () => {
   const isWelcome = currentMessages.length === 0
   const activeConv = conversations.find(c => c.id === activeId)
 
-  // Auto scroll
+  // Pull real name & role from auth context
+  const displayName = user?.fullName || 'Clinician'
+  const displayRole = user?.role || 'Clinical Researcher'
+  const firstName = displayName.split(' ')[0]
+
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, activeId])
 
-  // Auto resize textarea
   useEffect(() => {
     if (!textareaRef.current) return
     textareaRef.current.style.height = 'auto'
@@ -119,80 +114,41 @@ const Home = () => {
     const content = (text || input).trim()
     if (!content) return
     setInput('')
-
-    // Update conversation title if it's new
     setConversations(prev => prev.map(c =>
-      c.id === activeId && (c.title === 'New Conversation')
-        ? { ...c, title: content.slice(0, 42) } : c
+      c.id === activeId && c.title === 'New Conversation' ? { ...c, title: content.slice(0, 42) } : c
     ))
-
-    const userMsg = { id: Date.now(), role: 'user', content }
+    const userMsg = { id: Date.now(), role: 'user', content, userName: displayName }
     const loadMsg = { id: Date.now() + 1, role: 'assistant', content: '', loading: true }
-
     setMessages(prev => ({ ...prev, [activeId]: [...(prev[activeId] || []), userMsg, loadMsg] }))
-
     await new Promise(r => setTimeout(r, 1100 + Math.random() * 700))
-
     const reply = AI_REPLIES[Math.floor(Math.random() * AI_REPLIES.length)](content)
     setMessages(prev => ({
       ...prev,
-      [activeId]: [...(prev[activeId] || []).filter(m => !m.loading),
-        { id: Date.now() + 2, role: 'assistant', content: reply }],
+      [activeId]: [...(prev[activeId] || []).filter(m => !m.loading), { id: Date.now() + 2, role: 'assistant', content: reply }],
     }))
   }
 
-  const onKey = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() }
-  }
+  const onKey = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() } }
 
-  const grouped = GROUP_ORDER
-    .map(label => ({ label, items: conversations.filter(c => c.group === label) }))
-    .filter(g => g.items.length > 0)
+  const handleLogout = () => { logout(); navigate('/login') }
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  const grouped = GROUP_ORDER.map(label => ({ label, items: conversations.filter(c => c.group === label) })).filter(g => g.items.length > 0)
+
   return (
-    <div style={{
-      display: 'flex', height: '100vh', width: '100vw',
-      backgroundColor: '#080808', color: 'white', overflow: 'hidden',
-      fontFamily: "'DM Sans', system-ui, sans-serif",
-    }}>
+    <div style={{ display: 'flex', height: '100vh', width: '100vw', backgroundColor: '#080808', color: 'white', overflow: 'hidden', fontFamily: "'DM Sans', system-ui, sans-serif" }}>
 
-      {/* ════ SIDEBAR ════ */}
-      <div style={{
-        width: collapsed ? 0 : 258,
-        minWidth: collapsed ? 0 : 258,
-        height: '100vh', overflow: 'hidden',
-        backgroundColor: '#0d0d0d',
-        borderRight: '1px solid rgba(255,255,255,0.06)',
-        display: 'flex', flexDirection: 'column',
-        transition: 'width 0.22s ease, min-width 0.22s ease',
-      }}>
+      {/* SIDEBAR */}
+      <div style={{ width: collapsed ? 0 : 258, minWidth: collapsed ? 0 : 258, height: '100vh', overflow: 'hidden', backgroundColor: '#0d0d0d', borderRight: '1px solid rgba(255,255,255,0.06)', display: 'flex', flexDirection: 'column', transition: 'width 0.22s ease, min-width 0.22s ease' }}>
+
         {/* Logo */}
-        <div style={{
-          padding: '15px 14px 13px',
-          borderBottom: '1px solid rgba(255,255,255,0.06)',
-          display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0,
-        }}>
-          <div style={{
-            width: 30, height: 30, borderRadius: '8px', flexShrink: 0,
-            background: 'linear-gradient(135deg, #f472b6, #a855f7, #22d3ee)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontWeight: 700, fontSize: 13, color: 'white',
-          }}>I</div>
+        <div style={{ padding: '15px 14px 13px', borderBottom: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+          <div style={{ width: 30, height: 30, borderRadius: '8px', flexShrink: 0, background: 'linear-gradient(135deg, #f472b6, #a855f7, #22d3ee)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 13, color: 'white' }}>I</div>
           <span style={{ fontWeight: 600, fontSize: 15, whiteSpace: 'nowrap', letterSpacing: '-0.2px' }}>IntimaAI</span>
         </div>
 
-        {/* New Conversation button */}
+        {/* New Conversation */}
         <div style={{ padding: '12px 12px 4px', flexShrink: 0 }}>
-          <button onClick={newConversation} style={{
-            width: '100%', padding: '9px 14px', borderRadius: '10px',
-            background: 'rgba(168,85,247,0.15)',
-            border: '1px solid rgba(168,85,247,0.28)',
-            color: '#d8b4fe', fontSize: 13, fontWeight: 500, cursor: 'pointer',
-            display: 'flex', alignItems: 'center', gap: 7,
-            fontFamily: 'inherit', transition: 'background 0.15s',
-            whiteSpace: 'nowrap',
-          }}
+          <button onClick={newConversation} style={{ width: '100%', padding: '9px 14px', borderRadius: '10px', background: 'rgba(168,85,247,0.15)', border: '1px solid rgba(168,85,247,0.28)', color: '#d8b4fe', fontSize: 13, fontWeight: 500, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7, fontFamily: 'inherit', transition: 'background 0.15s', whiteSpace: 'nowrap' }}
             onMouseEnter={e => e.currentTarget.style.background = 'rgba(168,85,247,0.25)'}
             onMouseLeave={e => e.currentTarget.style.background = 'rgba(168,85,247,0.15)'}
           >
@@ -204,23 +160,9 @@ const Home = () => {
         <div style={{ flex: 1, overflowY: 'auto', padding: '8px 10px', scrollbarWidth: 'none' }}>
           {grouped.map(g => (
             <div key={g.label} style={{ marginBottom: 14 }}>
-              <div style={{
-                color: '#4b5563', fontSize: 10, fontWeight: 600,
-                letterSpacing: '0.1em', textTransform: 'uppercase',
-                padding: '4px 6px 6px',
-              }}>{g.label}</div>
+              <div style={{ color: '#4b5563', fontSize: 10, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', padding: '4px 6px 6px' }}>{g.label}</div>
               {g.items.map(c => (
-                <button key={c.id} onClick={() => setActiveId(c.id)} style={{
-                  width: '100%', textAlign: 'left', display: 'block',
-                  padding: '8px 10px', borderRadius: '9px', border: 'none',
-                  backgroundColor: c.id === activeId ? 'rgba(168,85,247,0.16)' : 'transparent',
-                  borderLeft: `2px solid ${c.id === activeId ? '#a855f7' : 'transparent'}`,
-                  color: c.id === activeId ? '#e9d5ff' : '#9ca3af',
-                  fontSize: 13, fontWeight: c.id === activeId ? 500 : 400,
-                  cursor: 'pointer', marginBottom: 1,
-                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                  fontFamily: 'inherit', transition: 'all 0.12s',
-                }}
+                <button key={c.id} onClick={() => setActiveId(c.id)} style={{ width: '100%', textAlign: 'left', display: 'block', padding: '8px 10px', borderRadius: '9px', border: 'none', backgroundColor: c.id === activeId ? 'rgba(168,85,247,0.16)' : 'transparent', borderLeft: `2px solid ${c.id === activeId ? '#a855f7' : 'transparent'}`, color: c.id === activeId ? '#e9d5ff' : '#9ca3af', fontSize: 13, fontWeight: c.id === activeId ? 500 : 400, cursor: 'pointer', marginBottom: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontFamily: 'inherit', transition: 'all 0.12s' }}
                   onMouseEnter={e => { if (c.id !== activeId) e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.05)' }}
                   onMouseLeave={e => { if (c.id !== activeId) e.currentTarget.style.backgroundColor = 'transparent' }}
                 >{c.title}</button>
@@ -229,120 +171,66 @@ const Home = () => {
           ))}
         </div>
 
-        {/* User footer */}
-        <div style={{
-          padding: '11px 13px', flexShrink: 0,
-          borderTop: '1px solid rgba(255,255,255,0.06)',
-          display: 'flex', alignItems: 'center', gap: 10,
-        }}>
-          <Avatar name="Devansh Pokhariya" size={33} />
+        {/* User footer — REAL name from auth */}
+        <div style={{ padding: '11px 13px', flexShrink: 0, borderTop: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <Avatar name={displayName} size={33} />
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ color: '#e5e7eb', fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Devansh Pokhariya</div>
-            <div style={{ color: '#6b7280', fontSize: 11 }}>Clinical Researcher</div>
+            <div style={{ color: '#e5e7eb', fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{displayName}</div>
+            <div style={{ color: '#6b7280', fontSize: 11 }}>{displayRole}</div>
           </div>
-          <button onClick={() => navigate('/login')} title="Sign out" style={{
-            background: 'none', border: 'none', cursor: 'pointer',
-            color: '#6b7280', padding: 4, borderRadius: 6,
-            display: 'flex', alignItems: 'center', transition: 'color 0.15s',
-          }}
+          <button onClick={handleLogout} title="Sign out" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', padding: 4, borderRadius: 6, display: 'flex', alignItems: 'center', transition: 'color 0.15s' }}
             onMouseEnter={e => e.currentTarget.style.color = '#f87171'}
             onMouseLeave={e => e.currentTarget.style.color = '#6b7280'}
           >
-            <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-            </svg>
+            <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
           </button>
         </div>
       </div>
 
-      {/* ════ MAIN ════ */}
+      {/* MAIN */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
         {/* Topbar */}
-        <div style={{
-          height: 52, flexShrink: 0, display: 'flex', alignItems: 'center',
-          padding: '0 16px', gap: 12,
-          borderBottom: '1px solid rgba(255,255,255,0.06)',
-          backgroundColor: '#080808',
-        }}>
-          <button onClick={() => setCollapsed(p => !p)} style={{
-            background: 'none', border: 'none', cursor: 'pointer',
-            color: '#6b7280', padding: 5, borderRadius: 6, display: 'flex', alignItems: 'center',
-            transition: 'color 0.15s',
-          }}
+        <div style={{ height: 52, flexShrink: 0, display: 'flex', alignItems: 'center', padding: '0 16px', gap: 12, borderBottom: '1px solid rgba(255,255,255,0.06)', backgroundColor: '#080808' }}>
+          <button onClick={() => setCollapsed(p => !p)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', padding: 5, borderRadius: 6, display: 'flex', alignItems: 'center', transition: 'color 0.15s' }}
             onMouseEnter={e => e.currentTarget.style.color = '#e5e7eb'}
             onMouseLeave={e => e.currentTarget.style.color = '#6b7280'}
           >
-            <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-            </svg>
+            <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
           </button>
-          <span style={{ color: '#e5e7eb', fontSize: 14, fontWeight: 500 }}>
-            {activeConv?.title || 'New Conversation'}
-          </span>
-          <div style={{ marginLeft: 'auto' }}>
-            <div style={{
-              padding: '5px 13px', borderRadius: '20px',
-              border: '1px solid rgba(168,85,247,0.35)',
-              color: '#d8b4fe', fontSize: 12, fontWeight: 500,
-              backgroundColor: 'rgba(168,85,247,0.08)',
-            }}>Reproductive Health AI</div>
+          <span style={{ color: '#e5e7eb', fontSize: 14, fontWeight: 500 }}>{activeConv?.title || 'New Conversation'}</span>
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
+            <span style={{ color: '#6b7280', fontSize: 13 }}>
+              {getGreeting()}, <span style={{ color: '#d8b4fe', fontWeight: 500 }}>{firstName}</span> 👋
+            </span>
+            <div style={{ padding: '5px 13px', borderRadius: '20px', border: '1px solid rgba(168,85,247,0.35)', color: '#d8b4fe', fontSize: 12, fontWeight: 500, backgroundColor: 'rgba(168,85,247,0.08)' }}>Reproductive Health AI</div>
           </div>
         </div>
 
         {/* Messages / Welcome */}
         <div style={{ flex: 1, overflowY: 'auto', scrollbarWidth: 'thin', scrollbarColor: '#222 transparent' }}>
           {isWelcome ? (
-            <div style={{
-              display: 'flex', flexDirection: 'column',
-              alignItems: 'center', justifyContent: 'center',
-              minHeight: '100%', padding: '40px 24px',
-              animation: 'fadeUp 0.3s ease',
-            }}>
-              {/* Bot icon */}
-              <div style={{
-                width: 78, height: 78, borderRadius: '20px',
-                backgroundColor: '#141414',
-                border: '1px solid rgba(255,255,255,0.08)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 30, marginBottom: 22,
-                boxShadow: '0 8px 28px rgba(0,0,0,0.5)',
-              }}>🩺</div>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100%', padding: '40px 24px', animation: 'fadeUp 0.3s ease' }}>
+              <div style={{ width: 78, height: 78, borderRadius: '20px', backgroundColor: '#141414', border: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 30, marginBottom: 16, boxShadow: '0 8px 28px rgba(0,0,0,0.5)' }}>🩺</div>
 
-              <h1 style={{
-                fontSize: 27, fontWeight: 700, color: 'white',
-                margin: '0 0 10px', letterSpacing: '-0.5px', textAlign: 'center',
-              }}>Clinical Intelligence at Your Fingertips</h1>
-              <p style={{
-                color: '#6b7280', fontSize: 14, textAlign: 'center',
-                maxWidth: 420, lineHeight: 1.65, margin: '0 0 34px',
-              }}>
+              <p style={{ color: '#6b7280', fontSize: 13, marginBottom: 4 }}>{getGreeting()},</p>
+
+              {/* ✅ REAL NAME shown in gradient */}
+              <h1 style={{ fontSize: 28, fontWeight: 700, margin: '0 0 4px', letterSpacing: '-0.5px', textAlign: 'center' }}>
+                <span style={{ background: 'linear-gradient(90deg, #f472b6, #a855f7, #22d3ee)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+                  {displayName}
+                </span>
+              </h1>
+
+              <p style={{ color: '#6b7280', fontSize: 14, textAlign: 'center', maxWidth: 420, lineHeight: 1.65, margin: '10px 0 34px' }}>
                 Ask about reproductive health cases, evidence-based protocols, or attach patient documents.
               </p>
 
-              {/* Suggestion cards */}
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(4, 1fr)',
-                gap: 10, width: '100%', maxWidth: 840,
-              }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, width: '100%', maxWidth: 840 }}>
                 {SUGGESTION_CARDS.map((card, i) => (
-                  <button key={i} onClick={() => sendMessage(`${card.title} ${card.sub}`)} style={{
-                    backgroundColor: '#111111',
-                    border: '1px solid rgba(255,255,255,0.07)',
-                    borderRadius: '12px', padding: '14px',
-                    cursor: 'pointer', textAlign: 'left',
-                    fontFamily: 'inherit', transition: 'all 0.15s',
-                    animation: `fadeUp 0.3s ease ${i * 0.06}s both`,
-                  }}
-                    onMouseEnter={e => {
-                      e.currentTarget.style.backgroundColor = '#181818'
-                      e.currentTarget.style.borderColor = 'rgba(168,85,247,0.28)'
-                    }}
-                    onMouseLeave={e => {
-                      e.currentTarget.style.backgroundColor = '#111111'
-                      e.currentTarget.style.borderColor = 'rgba(255,255,255,0.07)'
-                    }}
+                  <button key={i} onClick={() => sendMessage(`${card.title} ${card.sub}`)} style={{ backgroundColor: '#111111', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '12px', padding: '14px', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', transition: 'all 0.15s', animation: `fadeUp 0.3s ease ${i * 0.06}s both` }}
+                    onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#181818'; e.currentTarget.style.borderColor = 'rgba(168,85,247,0.28)' }}
+                    onMouseLeave={e => { e.currentTarget.style.backgroundColor = '#111111'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.07)' }}
                   >
                     <div style={{ fontSize: 20, marginBottom: 10 }}>{card.icon}</div>
                     <div style={{ color: '#e5e7eb', fontSize: 12.5, fontWeight: 500, marginBottom: 3 }}>{card.title}</div>
@@ -359,72 +247,27 @@ const Home = () => {
           )}
         </div>
 
-        {/* ════ Input bar ════ */}
-        <div style={{
-          flexShrink: 0, padding: '10px 24px 14px',
-          borderTop: '1px solid rgba(255,255,255,0.06)',
-          backgroundColor: '#080808',
-        }}>
+        {/* Input bar */}
+        <div style={{ flexShrink: 0, padding: '10px 24px 14px', borderTop: '1px solid rgba(255,255,255,0.06)', backgroundColor: '#080808' }}>
           <div style={{ maxWidth: 740, margin: '0 auto' }}>
-            <div style={{
-              backgroundColor: '#111111',
-              border: '1px solid rgba(255,255,255,0.1)',
-              borderRadius: '14px',
-              display: 'flex', alignItems: 'flex-end', gap: 8,
-              padding: '9px 10px',
-              transition: 'border-color 0.2s',
-            }}
+            <div style={{ backgroundColor: '#111111', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '14px', display: 'flex', alignItems: 'flex-end', gap: 8, padding: '9px 10px', transition: 'border-color 0.2s' }}
               onFocusCapture={e => e.currentTarget.style.borderColor = 'rgba(168,85,247,0.4)'}
               onBlurCapture={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'}
             >
-              {/* Attach */}
-              <button title="Attach patient document" style={{
-                background: 'none', border: 'none', cursor: 'pointer',
-                color: '#4b5563', padding: '4px', display: 'flex',
-                alignItems: 'center', borderRadius: 6, transition: 'color 0.15s',
-                flexShrink: 0, marginBottom: 2,
-              }}
+              <button title="Attach" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#4b5563', padding: '4px', display: 'flex', alignItems: 'center', borderRadius: 6, transition: 'color 0.15s', flexShrink: 0, marginBottom: 2 }}
                 onMouseEnter={e => e.currentTarget.style.color = '#a855f7'}
                 onMouseLeave={e => e.currentTarget.style.color = '#4b5563'}
               >
-                <svg width="17" height="17" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-                </svg>
+                <svg width="17" height="17" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" /></svg>
               </button>
-
-              <textarea
-                ref={textareaRef}
-                value={input}
-                onChange={e => setInput(e.target.value)}
-                onKeyDown={onKey}
-                placeholder="Ask about a case, protocol, diagnosis, or request evidence from PubMed..."
-                rows={1}
-                style={{
-                  flex: 1, background: 'none', border: 'none', outline: 'none',
-                  color: '#e5e7eb', fontSize: 13.5, lineHeight: 1.6,
-                  resize: 'none', fontFamily: 'inherit',
-                  maxHeight: 150, overflowY: 'auto', scrollbarWidth: 'none',
-                }}
+              <textarea ref={textareaRef} value={input} onChange={e => setInput(e.target.value)} onKeyDown={onKey} placeholder="Ask about a case, protocol, diagnosis, or request evidence from PubMed..." rows={1}
+                style={{ flex: 1, background: 'none', border: 'none', outline: 'none', color: '#e5e7eb', fontSize: 13.5, lineHeight: 1.6, resize: 'none', fontFamily: 'inherit', maxHeight: 150, overflowY: 'auto', scrollbarWidth: 'none' }}
               />
-
-              {/* Send */}
-              <button onClick={() => sendMessage()} disabled={!input.trim()} style={{
-                width: 34, height: 34, borderRadius: '9px', border: 'none', flexShrink: 0,
-                background: input.trim() ? 'linear-gradient(135deg, #ec4899, #a855f7)' : '#1a1a1a',
-                cursor: input.trim() ? 'pointer' : 'default',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                transition: 'all 0.15s',
-                boxShadow: input.trim() ? '0 3px 10px rgba(168,85,247,0.35)' : 'none',
-              }}>
-                <svg width="14" height="14" fill="none" stroke="white" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 12h14M12 5l7 7-7 7" />
-                </svg>
+              <button onClick={() => sendMessage()} disabled={!input.trim()} style={{ width: 34, height: 34, borderRadius: '9px', border: 'none', flexShrink: 0, background: input.trim() ? 'linear-gradient(135deg, #ec4899, #a855f7)' : '#1a1a1a', cursor: input.trim() ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.15s', boxShadow: input.trim() ? '0 3px 10px rgba(168,85,247,0.35)' : 'none' }}>
+                <svg width="14" height="14" fill="none" stroke="white" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 12h14M12 5l7 7-7 7" /></svg>
               </button>
             </div>
-
-            <p style={{ color: '#2d2d2d', fontSize: 11, textAlign: 'center', marginTop: 7 }}>
-              IntimaAI may make mistakes. Always verify clinical decisions with your institution's protocols.
-            </p>
+            <p style={{ color: '#2d2d2d', fontSize: 11, textAlign: 'center', marginTop: 7 }}>IntimaAI may make mistakes. Always verify clinical decisions with your institution's protocols.</p>
           </div>
         </div>
       </div>
@@ -433,23 +276,15 @@ const Home = () => {
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&display=swap');
         *, *::before, *::after { box-sizing: border-box; }
         body { margin: 0; background: #080808; }
-        ::-webkit-scrollbar { width: 4px; height: 4px; }
+        ::-webkit-scrollbar { width: 4px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #222; border-radius: 4px; }
         textarea { scrollbar-width: none; }
         textarea::-webkit-scrollbar { display: none; }
         textarea::placeholder { color: #3d3d3d; }
-        @keyframes fadeUp {
-          from { opacity: 0; transform: translateY(10px); }
-          to   { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes dotBounce {
-          0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
-          40%            { transform: translateY(-5px); opacity: 1; }
-        }
+        @keyframes fadeUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes dotBounce { 0%, 80%, 100% { transform: translateY(0); opacity: 0.4; } 40% { transform: translateY(-5px); opacity: 1; } }
       `}</style>
     </div>
   )
 }
-
-export default Home
